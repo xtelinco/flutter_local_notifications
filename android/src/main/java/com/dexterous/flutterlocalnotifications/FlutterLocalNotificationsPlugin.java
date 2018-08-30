@@ -63,6 +63,7 @@ public class FlutterLocalNotificationsPlugin implements MethodCallHandler, Plugi
     private static final String SHOW_DAILY_AT_TIME = "showDailyAtTime";
     private static final String SHOW_WEEKLY_AT_DAY_AND_TIME = "showWeeklyAtDayAndTime";
     private static final String METHOD_CHANNEL = "dexterous.com/flutter/local_notifications";
+    private static final String BACKGROUND_CHANNEL = "dexterous.com/flutter/local_notifications_background";
     private static final String PAYLOAD = "payload";
     private static final String INVALID_ICON_ERROR_CODE = "INVALID_ICON";
     private static final String INVALID_LARGE_ICON_ERROR_CODE = "INVALID_LARGE_ICON";
@@ -171,6 +172,11 @@ public class FlutterLocalNotificationsPlugin implements MethodCallHandler, Plugi
         channel = new MethodChannel(registrar.messenger(), METHOD_CHANNEL);
         FlutterLocalNotificationsPlugin plugin = new FlutterLocalNotificationsPlugin(registrar);
         channel.setMethodCallHandler(plugin);
+        MethodChannel backgroundChannel =
+                new MethodChannel(
+                        registrar.messenger(), BACKGROUND_CHANNEL);
+        backgroundChannel.setMethodCallHandler(plugin);
+        NotificationService.setBackgroundChannel(backgroundChannel);
     }
 
     public static void removeNotificationFromCache(Integer notificationId, Context context) {

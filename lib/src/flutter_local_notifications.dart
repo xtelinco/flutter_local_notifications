@@ -83,15 +83,17 @@ class FlutterLocalNotificationsPlugin {
   /// Show a notification with an optional payload that will be passed back to the app when a notification is tapped
   Future show(int id, String title, String body,
       NotificationDetails notificationDetails,
-      {String payload}) async {
+      {String payload, dynamic Function() callback}) async {
     var serializedPlatformSpecifics =
         _retrievePlatformSpecificNotificationDetails(notificationDetails);
+    var callbackHandle = PluginUtilities.getCallbackHandle(callback);
     await _channel.invokeMethod('show', <String, dynamic>{
       'id': id,
       'title': title,
       'body': body,
       'platformSpecifics': serializedPlatformSpecifics,
-      'payload': payload ?? ''
+      'payload': payload ?? '',
+      'callbackHandle': callbackHandle.toRawHandle()
     });
   }
 
