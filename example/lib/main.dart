@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:http/http.dart' as http;
@@ -21,9 +23,15 @@ class MyApp extends StatefulWidget {
 
 class _MyAppState extends State<MyApp> {
   FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin;
+  ReceivePort port = ReceivePort();
   @override
   initState() {
     super.initState();
+    IsolateNameServer.registerPortWithName(
+        port.sendPort, 'notifications_send_port');
+    port.listen((data) {
+      print('data $data');
+    });
     // initialise the plugin. app_icon needs to be a added as a drawable resource to the Android head project
     var initializationSettingsAndroid =
         new AndroidInitializationSettings('app_icon');
@@ -32,7 +40,14 @@ class _MyAppState extends State<MyApp> {
         initializationSettingsAndroid, initializationSettingsIOS);
     flutterLocalNotificationsPlugin = new FlutterLocalNotificationsPlugin();
     flutterLocalNotificationsPlugin.initialize(initializationSettings,
-        selectNotification: onSelectNotification);
+        selectNotification: onSelectNotification,
+        onHeadlessShowNotification: onShowNotification);
+  }
+
+  static Future onShowNotification(
+      int id, String title, String body, String payload) async {
+    print(
+        'showing notification id: $id, title: $title, body: $body, payload: $payload');
   }
 
   @override

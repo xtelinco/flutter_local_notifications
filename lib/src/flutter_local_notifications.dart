@@ -1,6 +1,8 @@
 part of flutter_local_notifications;
 
 typedef Future<dynamic> MessageHandler(String message);
+typedef Future<dynamic> ShowNotificationCallback(
+    int id, String title, String body, String payload);
 
 /// The available intervals for periodically showing notifications
 enum RepeatInterval { EveryMinute, Hourly, Daily, Weekly }
@@ -70,11 +72,22 @@ class FlutterLocalNotificationsPlugin {
 
   /// Initializes the plugin. Call this method on application before using the plugin further
   Future<bool> initialize(InitializationSettings initializationSettings,
-      {MessageHandler selectNotification}) async {
+      {MessageHandler selectNotification,
+      ShowNotificationCallback onHeadlessShowNotification}) async {
     onSelectNotification = selectNotification;
     var serializedPlatformSpecifics =
         _retrievePlatformSpecificInitializationSettings(initializationSettings);
     _channel.setMethodCallHandler(_handleMethod);
+    var callbackDispatcherHandle =
+        PluginUtilities.getCallbackHandle(callbackDispatcher);
+    serializedPlatformSpecifics['callbackDispatcher'] =
+        callbackDispatcherHandle.toRawHandle();
+    if (onHeadlessShowNotification != null) {
+      var showNotificationCallbackHandle =
+          PluginUtilities.getCallbackHandle(onHeadlessShowNotification);
+      serializedPlatformSpecifics['showNotificationCallback'] =
+          showNotificationCallbackHandle.toRawHandle();
+    }
     var result =
         await _channel.invokeMethod('initialize', serializedPlatformSpecifics);
     return result;
@@ -83,17 +96,15 @@ class FlutterLocalNotificationsPlugin {
   /// Show a notification with an optional payload that will be passed back to the app when a notification is tapped
   Future show(int id, String title, String body,
       NotificationDetails notificationDetails,
-      {String payload, dynamic Function() callback}) async {
+      {String payload}) async {
     var serializedPlatformSpecifics =
         _retrievePlatformSpecificNotificationDetails(notificationDetails);
-    var callbackHandle = PluginUtilities.getCallbackHandle(callback);
     await _channel.invokeMethod('show', <String, dynamic>{
       'id': id,
       'title': title,
       'body': body,
       'platformSpecifics': serializedPlatformSpecifics,
-      'payload': payload ?? '',
-      'callbackHandle': callbackHandle.toRawHandle()
+      'payload': payload ?? ''
     });
   }
 

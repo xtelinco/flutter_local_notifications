@@ -6,6 +6,12 @@ import android.support.annotation.NonNull;
 import android.support.v4.app.JobIntentService;
 import android.util.Log;
 
+import java.util.ArrayDeque;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
+
 import io.flutter.plugin.common.MethodCall;
 import io.flutter.plugin.common.MethodChannel;
 import io.flutter.plugin.common.PluginRegistry.PluginRegistrantCallback;
@@ -13,59 +19,49 @@ import io.flutter.view.FlutterCallbackInformation;
 import io.flutter.view.FlutterMain;
 import io.flutter.view.FlutterNativeView;
 import io.flutter.view.FlutterRunArguments;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 public class NotificationService extends JobIntentService implements MethodChannel.MethodCallHandler {
-    public static final String TAG = "NotificationService";
+    private static final String TAG = "NotificationService";
+    private static final String BACKGROUND_CHANNEL = "dexterous.com/flutter/local_notifications_background";
+    private static final int JOB_ID = (int)UUID.randomUUID().getMostSignificantBits();
+    private static final String NOTIFICATIONSERVICE_INITIALIZED_METHOD = "NotificationService.initialized";
     private static AtomicBoolean started = new AtomicBoolean(false);
-    private static FlutterNativeView backgroundFlutterView;
-    private static MethodChannel backgroundChannel;
     private static PluginRegistrantCallback pluginRegistrantCallback;
-
-    private String appBundlePath;
-
-    public static void onInitialized() {
-        started.set(true);
+    private MethodChannel backgroundChannel;
+    private ArrayDeque onShowNotificationQueue = new ArrayDeque<Map<String, Object>>();
+    private FlutterNativeView backgroundFlutterView;
+    public static void enqueueWork(Context context, Intent intent) {
+        enqueueWork(context, NotificationService.class, JOB_ID, intent);
     }
 
-    public static void startNotificationService(Context context, long callbackHandle) {
-        FlutterMain.ensureInitializationComplete(context, null);
-        String mAppBundlePath = FlutterMain.findAppBundlePath(context);
-        FlutterCallbackInformation cb =
-                FlutterCallbackInformation.lookupCallbackInformation(callbackHandle);
-        if (cb == null) {
-            Log.e(TAG, "Fatal: failed to find callback");
-            return;
-        }
-
-        // Note that we're passing `true` as the second argument to our
-        // FlutterNativeView constructor. This specifies the FlutterNativeView
-        // as a background view and does not create a drawing surface.
-        backgroundFlutterView = new FlutterNativeView(context, true);
-        if (mAppBundlePath != null && !started.get()) {
-            Log.i(TAG, "Starting NotificationService...");
+    private void startNotificationService(Context context) {
+        synchronized (started) {
+            FlutterMain.ensureInitializationComplete(context, null);
+            long callbackHandle = context.getSharedPreferences(
+                    FlutterLocalNotificationsPlugin.SHARED_PREFERENCES_KEY,
+                    Context.MODE_PRIVATE)
+                    .getLong(FlutterLocalNotificationsPlugin.CALLBACK_DISPATCHER_HANDLE_KEY, 0);
+            FlutterCallbackInformation callbackInfo = FlutterCallbackInformation.lookupCallbackInformation(callbackHandle);
+            if (callbackInfo == null) {
+                Log.e(TAG, "Fatal: failed to find callback");
+                return;
+            }
+            backgroundFlutterView = new FlutterNativeView(context, true);
             FlutterRunArguments args = new FlutterRunArguments();
-            args.bundlePath = mAppBundlePath;
-            args.entrypoint = cb.callbackName;
-            args.libraryPath = cb.callbackLibraryPath;
+            args.bundlePath = FlutterMain.findAppBundlePath(context);
+            args.entrypoint = callbackInfo.callbackName;
+            args.libraryPath = callbackInfo.callbackLibraryPath;
             backgroundFlutterView.runFromBundle(args);
-            pluginRegistrantCallback.registerWith(backgroundFlutterView.getPluginRegistry());
+            if (pluginRegistrantCallback != null) {
+                pluginRegistrantCallback.registerWith(backgroundFlutterView.getPluginRegistry());
+            }
+
         }
+        backgroundChannel = new MethodChannel(backgroundFlutterView, BACKGROUND_CHANNEL);
+        backgroundChannel.setMethodCallHandler(this);
+        Log.i(TAG, "NotificationService started");
     }
 
-    public static void setBackgroundChannel(MethodChannel channel) {
-        backgroundChannel = channel;
-    }
-
-
-    public static boolean setBackgroundFlutterView(FlutterNativeView view) {
-        if (backgroundFlutterView != null && backgroundFlutterView != view) {
-            Log.i(TAG, "setBackgroundFlutterView tried to overwrite an existing FlutterNativeView");
-            return false;
-        }
-        backgroundFlutterView = view;
-        return true;
-    }
 
     public static void setPluginRegistrant(PluginRegistrantCallback callback) {
         pluginRegistrantCallback = callback;
@@ -73,21 +69,48 @@ public class NotificationService extends JobIntentService implements MethodChann
 
     @Override
     public void onCreate() {
+        Log.i(TAG, "NotificationService onCreate");
         super.onCreate();
-        Context context = getApplicationContext();
-        FlutterMain.ensureInitializationComplete(context, null);
-        appBundlePath = FlutterMain.findAppBundlePath(context);
+        startNotificationService(this);
     }
 
 
     @Override
     protected void onHandleWork(@NonNull Intent intent) {
-
+        Log.i(TAG, "NotificationService onHandleWork");
+        switch(intent.getAction()) {
+            case FlutterLocalNotificationsPlugin.SHOW_NOTIFICATION_ACTION:
+                Log.i(TAG, "NotificationService intent action " + FlutterLocalNotificationsPlugin.SHOW_NOTIFICATION_ACTION);
+                synchronized(started) {
+                    HashMap<String, Object> callbackArgs = (HashMap<String, Object>) intent.getSerializableExtra(FlutterLocalNotificationsPlugin.ON_SHOW_NOTIFICATION_METHOD_ARGS);
+                    /*if (!started.get()) {
+                        Log.i(TAG, "NotificationService queued callback");
+                        onShowNotificationQueue.add(callbackArgs);
+                    } else {
+                        Log.i(TAG, "NotificationService invoke callback");
+                        backgroundChannel.invokeMethod(FlutterLocalNotificationsPlugin.ON_SHOW_NOTIFICATION_METHOD, callbackArgs);
+                    }*/
+                    onShowNotificationQueue.add(callbackArgs);
+                }
+                break;
+        }
     }
 
 
     @Override
-    public void onMethodCall(MethodCall methodCall, MethodChannel.Result result) {
-
+    public void onMethodCall(MethodCall call, MethodChannel.Result result) {
+        Log.i(TAG, "NotificationService method call: " + call.method);
+        if(call.method.equals(NOTIFICATIONSERVICE_INITIALIZED_METHOD)) {
+            synchronized (started) {
+                while(!onShowNotificationQueue.isEmpty()) {
+                    Log.i(TAG, "NotificationService invoke queued callback");
+                    backgroundChannel.invokeMethod(FlutterLocalNotificationsPlugin.ON_SHOW_NOTIFICATION_METHOD, onShowNotificationQueue.remove());
+                }
+                started.set(true);
+                result.success(null);
+            }
+        } else {
+            result.notImplemented();
+        }
     }
 }
