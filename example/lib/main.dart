@@ -23,15 +23,9 @@ class MyApp extends StatefulWidget {
 
 class _MyAppState extends State<MyApp> {
   FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin;
-  ReceivePort port = ReceivePort();
   @override
   initState() {
     super.initState();
-    IsolateNameServer.registerPortWithName(
-        port.sendPort, 'notifications_send_port');
-    port.listen((data) {
-      print('data $data');
-    });
     // initialise the plugin. app_icon needs to be a added as a drawable resource to the Android head project
     var initializationSettingsAndroid =
         new AndroidInitializationSettings('app_icon');
