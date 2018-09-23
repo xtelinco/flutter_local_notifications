@@ -4,9 +4,14 @@
 
 static bool appResumingFromBackground;
 
+@interface FlutterUserNotificationPropagator : NSObject <UNUserNotificationCenterDelegate>
+- (void)addListener:(NSObject<UNUserNotificationCenterDelegate> *)delegate __IOS_AVAILABLE(10.0) __TVOS_AVAILABLE(10.0) __WATCHOS_AVAILABLE(3.0);
+@end
+
 @implementation FlutterLocalNotificationsPlugin
 
 FlutterMethodChannel* channel;
+FlutterUserNotificationPropagator *propagator = 0;
 NSString *const INITIALIZE_METHOD = @"initialize";
 NSString *const SHOW_METHOD = @"show";
 NSString *const SCHEDULE_METHOD = @"schedule";
@@ -24,6 +29,7 @@ NSString *const REQUEST_BADGE_PERMISSION = @"requestBadgePermission";
 NSString *const DEFAULT_PRESENT_ALERT = @"defaultPresentAlert";
 NSString *const DEFAULT_PRESENT_SOUND = @"defaultPresentSound";
 NSString *const DEFAULT_PRESENT_BADGE = @"defaultPresentBadge";
+NSString *const DEFAULT_PRESENT_FOREGROUND = @"defaultPresentForeground";
 NSString *const PLATFORM_SPECIFICS = @"platformSpecifics";
 NSString *const ID = @"id";
 NSString *const TITLE = @"title";
@@ -45,6 +51,7 @@ NSString *launchPayload;
 bool displayAlert;
 bool playSound;
 bool updateBadge;
+bool presentForeground;
 bool initialized;
 + (bool) resumingFromBackground { return appResumingFromBackground; }
 UILocalNotification *launchNotification;
@@ -56,7 +63,6 @@ typedef NS_ENUM(NSInteger, RepeatInterval) {
     Weekly
 };
 
-
 + (void)registerWithRegistrar:(NSObject<FlutterPluginRegistrar>*)registrar {
     channel = [FlutterMethodChannel
                methodChannelWithName:CHANNEL
@@ -64,7 +70,17 @@ typedef NS_ENUM(NSInteger, RepeatInterval) {
     FlutterLocalNotificationsPlugin* instance = [[FlutterLocalNotificationsPlugin alloc] init];
     if(@available(iOS 10.0, *)) {
         UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
-        center.delegate = instance;
+        NSObject *d = center.delegate;
+        if( [d isKindOfClass:[FlutterUserNotificationPropagator class]] ) {
+            [(FlutterUserNotificationPropagator*)d addListener:instance];
+        }else{
+            propagator = [[FlutterUserNotificationPropagator alloc] init];
+            if( center.delegate ) {
+                [propagator addListener:center.delegate];
+            }
+            [propagator addListener:instance];
+            center.delegate = propagator;
+        }
     }
     [registrar addApplicationDelegate:instance];
     [registrar addMethodCallDelegate:instance channel:channel];
@@ -73,6 +89,7 @@ typedef NS_ENUM(NSInteger, RepeatInterval) {
 - (void)initialize:(FlutterMethodCall * _Nonnull)call result:(FlutterResult _Nonnull)result {
     appResumingFromBackground = false;
     NSDictionary *arguments = [call arguments];
+    presentForeground = false;
     if(arguments[DEFAULT_PRESENT_ALERT] != [NSNull null]) {
         displayAlert = [[arguments objectForKey:DEFAULT_PRESENT_ALERT] boolValue];
     }
@@ -81,6 +98,9 @@ typedef NS_ENUM(NSInteger, RepeatInterval) {
     }
     if(arguments[DEFAULT_PRESENT_BADGE] != [NSNull null]) {
         updateBadge = [[arguments objectForKey:DEFAULT_PRESENT_BADGE] boolValue];
+    }
+    if(arguments[DEFAULT_PRESENT_FOREGROUND] != [NSNull null]) {
+        presentForeground = [[arguments objectForKey:DEFAULT_PRESENT_FOREGROUND] boolValue];
     }
     bool requestedSoundPermission = false;
     bool requestedAlertPermission = false;
@@ -375,20 +395,25 @@ typedef NS_ENUM(NSInteger, RepeatInterval) {
 
 - (void)userNotificationCenter:(UNUserNotificationCenter *)center willPresentNotification :(UNNotification *)notification withCompletionHandler :(void (^)(UNNotificationPresentationOptions))completionHandler NS_AVAILABLE_IOS(10.0) {
     UNNotificationPresentationOptions presentationOptions = 0;
-    NSNumber *presentAlertValue = (NSNumber*)notification.request.content.userInfo[PRESENT_ALERT];
-    NSNumber *presentSoundValue = (NSNumber*)notification.request.content.userInfo[PRESENT_SOUND];
-    NSNumber *presentBadgeValue = (NSNumber*)notification.request.content.userInfo[PRESENT_BADGE];
-    bool presentAlert = [presentAlertValue boolValue];
-    bool presentSound = [presentSoundValue boolValue];
-    bool presentBadge = [presentBadgeValue boolValue];
-    if(presentAlert) {
-        presentationOptions |= UNNotificationPresentationOptionAlert;
-    }
-    if(presentSound){
-        presentationOptions |= UNNotificationPresentationOptionSound;
-    }
-    if(presentBadge) {
-        presentationOptions |= UNNotificationPresentationOptionBadge;
+    if(presentForeground) {
+        NSNumber *presentAlertValue = (NSNumber*)notification.request.content.userInfo[PRESENT_ALERT];
+        NSNumber *presentSoundValue = (NSNumber*)notification.request.content.userInfo[PRESENT_SOUND];
+        NSNumber *presentBadgeValue = (NSNumber*)notification.request.content.userInfo[PRESENT_BADGE];
+        bool presentAlert = [presentAlertValue boolValue];
+        bool presentSound = [presentSoundValue boolValue];
+        bool presentBadge = [presentBadgeValue boolValue];
+        if(presentAlert) {
+            presentationOptions |= UNNotificationPresentationOptionAlert;
+        }
+        if(presentSound){
+            presentationOptions |= UNNotificationPresentationOptionSound;
+        }
+        if(presentBadge) {
+            presentationOptions |= UNNotificationPresentationOptionBadge;
+        }
+    }else{
+        NSString *payload = notification.request.content.userInfo[PAYLOAD];
+        [channel invokeMethod:@"foregroundNotification" arguments:payload];
     }
     completionHandler(presentationOptions);
 }
@@ -428,3 +453,65 @@ didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
 }
 
 @end
+
+@implementation FlutterUserNotificationPropagator {
+    NSMutableArray *delegates;
+}
+
+- (id)init {
+    self = [super init];
+    if(self) {
+        delegates = [[NSMutableArray alloc] init];
+    }
+    return self;
+}
+
+- (void)dealloc {
+}
+
+- (void)addListener:(NSObject<UNUserNotificationCenterDelegate> *)delegate __IOS_AVAILABLE(10.0) __TVOS_AVAILABLE(10.0) __WATCHOS_AVAILABLE(3.0) {
+    [delegates addObject:delegate];
+}
+
+- (void)userNotificationCenter:(UNUserNotificationCenter *)center willPresentNotification :(UNNotification *)notification withCompletionHandler :(void (^)(UNNotificationPresentationOptions))completionHandler NS_AVAILABLE_IOS(10.0) {
+    
+    void (^handler)(UNNotificationPresentationOptions options) = Nil;
+    if(completionHandler) {
+        __block bool done = false;
+        handler = ^(UNNotificationPresentationOptions options) {
+            if(!done) {
+                done = true;
+                (completionHandler)(options);
+            }
+        };
+    }
+    
+    for(NSObject<UNUserNotificationCenterDelegate> *delegate in delegates) {
+        [delegate userNotificationCenter:center willPresentNotification:notification withCompletionHandler:handler];
+    }
+}
+
+- (void)userNotificationCenter:(UNUserNotificationCenter *)center
+didReceiveNotificationResponse:(UNNotificationResponse *)response
+         withCompletionHandler:(void (^)(void))completionHandler NS_AVAILABLE_IOS(10.0) {
+    
+    
+    void (^handler)(void) = Nil;
+    if(completionHandler) {
+        __block bool done = false;
+        handler = ^(void) {
+            if(!done) {
+                done = true;
+                (completionHandler)();
+            }
+        };
+    }
+    
+    for(NSObject<UNUserNotificationCenterDelegate> *delegate in delegates) {
+        [delegate userNotificationCenter:center didReceiveNotificationResponse:response withCompletionHandler:handler];
+    }
+}
+
+@end
+
+
