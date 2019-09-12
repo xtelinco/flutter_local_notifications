@@ -57,7 +57,7 @@ bool playSound;
 bool updateBadge;
 bool initialized;
 bool launchingAppFromNotification;
-FlutterHeadlessDartRunner  *headlessRunner;
+//FlutterHeadlessDartRunner  *headlessRunner;
 NSUserDefaults *persistentState;
 NSObject<FlutterPluginRegistrar> *_registrar;
 
@@ -78,7 +78,7 @@ typedef NS_ENUM(NSInteger, RepeatInterval) {
                binaryMessenger:[registrar messenger]];
     persistentState = [NSUserDefaults standardUserDefaults];
     FlutterLocalNotificationsPlugin* instance = [[FlutterLocalNotificationsPlugin alloc] init];
-    headlessRunner = [[FlutterHeadlessDartRunner alloc] init];
+    //headlessRunner = [[FlutterHeadlessDartRunner alloc] init];
     // callbackChannel = [FlutterMethodChannel methodChannelWithName:CALLBACK_CHANNEL binaryMessenger:headlessRunner];
     if(@available(iOS 10.0, *)) {
         UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
